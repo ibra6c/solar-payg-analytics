@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: stg_payments
+    description: Deduplicated payments (one row per provider_reference).
+    columns:
+      - name: provider_reference
+        data_tests: [unique, not_null]
+      - name: amount_local
+        data_tests: [not_null]
+  - name: stg_contracts
+    columns:
+      - name: contract_id
+        data_tests: [unique, not_null]
+      - name: product_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: product_id
+  - name: stg_fx_rates
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [country_code, rate_month]

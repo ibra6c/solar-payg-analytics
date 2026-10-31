@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  WAREHOUSE_HOST: localhost
+  WAREHOUSE_PORT: "5432"
+  WAREHOUSE_DB: warehouse
+  WAREHOUSE_USER: postgres
+  WAREHOUSE_PASSWORD: postgres
+  BI_READER_ROLE: superset_reader
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          src: "generator superset"
+
+  dbt:
+    name: Pipeline + dbt build
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: warehouse
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Create read-only BI role
+        run: psql -h localhost -U postgres -d warehouse -c "create role superset_reader login password 'reader'"
+        env:
+          PGPASSWORD: postgres
+      - name: Generate, load, dbt build
+        run: bash docker/pipeline/run.sh
+        env:
+          N_CONTRACTS: "3000"
+          RAW_DIR: ${{ runner.temp }}/raw
+
+  e2e:
+    name: End-to-end (dbt + Superset dashboards as code)
+    needs: dbt
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: warehouse
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-retries 20
+    env:
+      SUPERSET_SECRET_KEY: ci-only-secret-key-not-for-production
+      SUPERSET_CONFIG_PATH: ${{ github.workspace }}/superset/superset_config.py
+      SUPERSET_METADATA_URI: sqlite:///${{ runner.temp }}/superset.db
+      FLASK_APP: superset
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-superset.txt
+      - name: Build the warehouse
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d warehouse \
+            -c "create role superset_reader login password 'reader'"
+          bash docker/pipeline/run.sh
+        env:
+          N_CONTRACTS: "3000"
+          RAW_DIR: ${{ runner.temp }}/raw
+      - name: Start Superset
+        run: |
+          superset db upgrade
+          superset fab create-admin --username admin --password admin \
+            --firstname Admin --lastname User --email admin@example.com
+          superset init
+          nohup gunicorn -b 127.0.0.1:8088 -w 2 -k gthread --threads 4 --timeout 120 \
+            "superset.app:create_app()" > superset.log 2>&1 &
+      - name: Provision dashboards and run every chart query
+        run: |
+          python superset/provision/provision.py --url http://127.0.0.1:8088 --verify \
+            --warehouse-uri postgresql+psycopg2://superset_reader:reader@localhost:5432/warehouse
+      - name: Superset logs
+        if: failure()
+        run: tail -n 200 superset.log

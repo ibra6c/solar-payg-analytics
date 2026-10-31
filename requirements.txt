@@ -1,0 +1,4 @@
+# pipeline: data generator + loader + dbt
+dbt-core>=1.10,<2
+dbt-postgres>=1.9,<2
+psycopg[binary]>=3.1,<4

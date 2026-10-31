@@ -1,0 +1,5 @@
+# Superset outside Docker (used by the end-to-end CI job and for local runs)
+apache-superset==6.0.0
+psycopg2-binary
+rich
+marshmallow<4

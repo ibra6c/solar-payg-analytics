@@ -1,0 +1,70 @@
+version: 2
+
+models:
+  - name: dim_contracts
+    description: One row per PAYG contract with product, customer, agent and country attributes.
+    columns:
+      - name: contract_id
+        data_tests: [unique, not_null]
+      - name: country_name
+        data_tests: [not_null]
+      - name: total_price_local
+        description: Deposit + daily rate x term, in local currency.
+        data_tests: [not_null]
+
+  - name: fct_payments
+    description: Deduplicated mobile-money payments, with amounts in local currency and USD.
+    columns:
+      - name: payment_id
+        data_tests: [unique, not_null]
+      - name: contract_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_contracts')
+                field: contract_id
+      - name: amount_usd
+        data_tests: [not_null]
+
+  - name: fct_contract_monthly
+    description: >
+      Month-end snapshot per contract. Arrears = expected cumulative (schedule)
+      minus paid cumulative; days in arrears = arrears / daily rate.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [contract_id, snapshot_month]
+    columns:
+      - name: par_bucket
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['0. Current', '1. 1-30 days', '2. 31-60 days', '3. 61-90 days', '4. 90+ days']
+      - name: contract_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Active', 'Paid off', 'Written off']
+      - name: months_on_book
+        data_tests: [not_null]
+
+  - name: rpt_cumulative_collections
+    description: >
+      Cumulative collection curves (cohort x months on book), duplicated per currency view
+      ('USD' / 'Local') so that Superset can switch currency with a native filter.
+    columns:
+      - name: currency_view
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['USD', 'Local']
+
+  - name: rpt_collections_monthly
+    description: Monthly collections and expected billing per country, product and channel, per currency view.
+    columns:
+      - name: currency_view
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['USD', 'Local']

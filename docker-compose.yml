@@ -1,0 +1,86 @@
+name: solar-payg-analytics
+
+x-warehouse-env: &warehouse-env
+  WAREHOUSE_HOST: postgres
+  WAREHOUSE_PORT: "5432"
+  WAREHOUSE_DB: warehouse
+  WAREHOUSE_USER: ${POSTGRES_USER:-postgres}
+  WAREHOUSE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  BI_READER_ROLE: superset_reader
+
+x-superset-env: &superset-env
+  SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?set SUPERSET_SECRET_KEY in .env}
+  SUPERSET_CONFIG_PATH: /app/config/superset_config.py
+  SUPERSET_METADATA_URI: postgresql+psycopg2://superset:${SUPERSET_DB_PASSWORD:-superset}@postgres:5432/superset
+  SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+  SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
+
+services:
+  # One Postgres instance, two databases: `warehouse` (dbt) and `superset` (metadata)
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD:-superset}
+      READER_PASSWORD: ${READER_PASSWORD:-reader}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      retries: 20
+
+  # One-shot: generate synthetic data -> load raw schema -> dbt build (models + tests)
+  pipeline:
+    build:
+      context: .
+      dockerfile: docker/pipeline/Dockerfile
+    environment:
+      <<: *warehouse-env
+      N_CONTRACTS: ${N_CONTRACTS:-12000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  superset:
+    build: docker/superset
+    environment: *superset-env
+    volumes:
+      - ./superset/superset_config.py:/app/config/superset_config.py:ro
+      - ./docker/superset/bootstrap.sh:/app/config/bootstrap.sh:ro
+    command: ["bash", "/app/config/bootstrap.sh"]
+    ports:
+      - "${SUPERSET_HOST_PORT:-8088}:8088"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8088/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # One-shot: dashboards as code — database, datasets, metrics, charts, dashboard
+  superset-provision:
+    build: docker/superset
+    environment:
+      <<: *superset-env
+      WAREHOUSE_SQLALCHEMY_URI: postgresql+psycopg2://superset_reader:${READER_PASSWORD:-reader}@postgres:5432/warehouse
+    volumes:
+      - ./superset/provision:/app/provision:ro
+    command: ["python", "/app/provision/provision.py", "--url", "http://superset:8088", "--verify"]
+    depends_on:
+      superset:
+        condition: service_healthy
+      pipeline:
+        condition: service_completed_successfully
+    restart: "no"
+
+volumes:
+  pgdata:

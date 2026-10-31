@@ -1,0 +1,20 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# generated data (rebuilt by the generator)
+data/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+logs/
+
+# Superset local runs
+superset_home/
+*.db
+
+.DS_Store

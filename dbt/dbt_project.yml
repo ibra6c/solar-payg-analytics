@@ -1,0 +1,34 @@
+name: solar_payg
+version: "1.0.0"
+config-version: 2
+profile: solar_payg
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Reporting date: everything is computed "as of" this day (month-end snapshots stop here)
+  as_of_date: "2026-09-30"
+  # Days of arrears after which a contract is considered written off
+  write_off_days: 120
+
+models:
+  solar_payg:
+    staging:
+      +schema: staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
+      # read-only role used by Superset: it only ever sees the marts
+      +grants:
+        select: ["{{ env_var('BI_READER_ROLE', 'superset_reader') }}"]
+
+on-run-end:
+  - "grant usage on schema marts to {{ env_var('BI_READER_ROLE', 'superset_reader') }}"

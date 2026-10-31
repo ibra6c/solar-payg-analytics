@@ -1,0 +1,21 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Raw extracts from the operational PAYG platform (synthetic), loaded by generator/load.py
+    schema: raw
+    tables:
+      - name: countries
+      - name: fx_rates
+        description: Monthly local-currency-per-USD rates, one row per country and month
+      - name: products
+      - name: agents
+        description: Sales agents and shops
+      - name: customers
+      - name: contracts
+        description: One row per PAYG contract (device sold on credit)
+      - name: payments
+        description: >
+          Mobile money payment events. The feed is at-least-once: the same transaction
+          can arrive twice (same provider_reference, different payment_id).
+        loaded_at_field: ingested_at
