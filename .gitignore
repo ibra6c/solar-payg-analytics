@@ -18,3 +18,9 @@ superset_home/
 *.db
 
 .DS_Store
+
+# Windows / WSL
+*:Zone.Identifier
+
+# dbt local
+dbt/.user.yml
